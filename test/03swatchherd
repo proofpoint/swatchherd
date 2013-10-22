@@ -1,0 +1,12 @@
+#!/bin/bash
+
+fail()
+{
+   echo "$@" >&2
+   exit 2
+}
+
+./swatchherd --verbose --config-root=test/data/swatch.d \
+    --logfile-root=test/data/files \
+    --pidfile-dir=test/data/files/var/run \
+    --wait-timeout=10 scan 2>&1 | tee test/data/swatchherd.out

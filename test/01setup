@@ -1,0 +1,4 @@
+#!/bin/bash
+
+rm -rf test/data
+cp -R test/fixture test/data

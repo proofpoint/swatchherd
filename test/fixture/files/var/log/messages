@@ -1,0 +1,4 @@
+Oct 19 00:30:01 dhcp-10-20-21-83 newsyslog[17158]: logfile turned over
+Oct 19 08:59:34 dhcp-10-20-21-83 configd[14]: Sleep: Success - BATT 63 - Clamshell Sleep
+Oct 19 08:59:34 dhcp-10-20-21-83 swatchherd[0]: swatchherd test message
+Oct 19 08:59:34 dhcp-10-20-21-83 configd[14]: Wake: Success - BATT 63 - PWRB EC LID0

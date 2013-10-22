@@ -1,0 +1,120 @@
+#!/usr/bin/env perl
+
+use strict;
+use warnings;
+use File::Basename;
+use POSIX qw(strftime);
+use Test::More qw(no_plan);
+
+BEGIN { use_ok('PPOPS::Herd::Swatch'); }
+
+my $cfg = { 'config-root'  => "test/data/swatch.d",
+            'logfile-root' => "test/data/files",
+            'pidfile-dir' => "test/data/files/var/run",
+            'wait-timeout' => 10 };
+
+$cfg->{'debug'} = $ENV{'TEST_DEBUG'} if $ENV{'TEST_DEBUG'};
+print "DEBUG level $cfg->{'debug'}\n" if $ENV{'TEST_DEBUG'};
+
+my $herd = PPOPS::Herd::Swatch->new($cfg);
+is(ref($herd), 'PPOPS::Herd::Swatch', 'object');
+
+my $log = [ ];
+my $logger = sub { my ($pri, $msg) = @_; push(@$log, [ time(), $pri, $msg ]) };
+$herd->logger($logger);
+sub clearlog {
+   $log = [ ];
+}
+
+sub printlog {
+   print join("\n",
+              map { join(' ',
+                         strftime('%Y-%m-%dT%H:%M:%SZ', gmtime($_->[0])),
+                         $_->[2]) }
+                 grep { $_->[1] ne 'debug' } @$log), "\n";
+}
+
+sub greplog {
+   my ($pat) = @_;
+
+   grep { /$pat/ } map { $_->[2] } @$log;
+}
+
+can_ok($herd, qw(start stop update_config reload status ensure
+                 instances scan));
+
+my $f_instance = "/var/log/messages";
+my $f_logfile = "test/data/files//var/log/messages";
+my $f_conffile = "test/data/swatch.d$f_instance/swatch.conf";
+my $f_pidfile = "test/data/files/var/run/swatchherd_var_log_messages.pid";
+my @f_cmdline = ('swatch',
+                 '--daemon',
+                 "--config-file=$f_conffile",
+                 "--pid-file=$f_pidfile",
+                 "--tail-file=$f_logfile");
+
+is_deeply([$herd->instances], [$f_instance], 'instances');
+is($herd->pidfile($f_instance), $f_pidfile, 'pidfile');
+is_deeply([$herd->cmdline($f_instance)], [@f_cmdline], 'cmdline');
+
+unlink($f_conffile);
+my ($changed) = $herd->update_config();
+is($changed, $f_instance, 'update_config');
+is(`diff $f_conffile $cfg->{'config-root'}/var/log/messages/test-message.conf`, '', 'baseconf');
+($changed) = $herd->update_config();
+ok(!defined($changed), 'unchanged');
+
+clearlog();
+my $started = $herd->start();
+is_deeply($started, { $f_instance => 'running' }, 'start');
+ok(greplog('starting herd'), 'start-log');
+
+my $status = $herd->status();
+is_deeply($status, { $f_instance => 'running' }, 'status');
+
+my $stopped = $herd->stop();
+is_deeply($stopped, { $f_instance => 'stopped' }, 'stop');
+
+my $ensured = $herd->ensure();
+is_deeply($ensured, { $f_instance => 'running' }, 'ensure');
+
+open(my $fh, '>', "test/data/swatch.d/var/log/messages/test-message2.conf");
+print $fh <<EOF;
+watchfor /second swatchherd test message/
+   echo
+EOF
+close($fh);
+
+clearlog();
+$herd->ensure();
+printlog();
+ok(greplog("will reload"), 'ensure-reload');
+
+$herd->stop();
+
+my $nf_logfile = "/var/log/fortiva/webservicev35.log";
+my $nf_conffile = "test/data/swatch.d$nf_logfile/swatch.conf";
+my $nf_pidfile = "test/data/files/var/run/swatchherd_var_log_fortiva_webservicev35_log.pid";
+system("mkdir -p test/data/swatch.d$nf_logfile") and die $!;
+open(my $nfh, '>', "test/data/swatch.d$nf_logfile/LongReplyWait.conf") or die $!;
+print $nfh <<'EOF';
+watchfor /Still waiting for a response from (\d+\.\d+\.\d+\.\d+):(\d+) after (\d+) seconds/
+   threshold track_by=longreplywait,type=limit,count=5,seconds=900
+   exec echo -e "<%= hostname %>\tLongReplyWait\t2\tSaw 5 waits in 15 min" | send_nsca nagios2.sc4.proofpoint.com
+EOF
+close($nfh);
+my $substr = "Still waiting for a response from ";
+
+
+my @nf_cmdline = ('swatch',
+                 '--daemon',
+                 "--config-file=$nf_conffile",
+                 "--pid-file=$nf_pidfile",
+                 "--read-pipe='tail -F -n 0 \"test/data/files/$nf_logfile\" | grep \"$substr\"'");
+
+is_deeply([$herd->instances()], ['/var/log/messages'], 'check-update');
+my ($updated) = $herd->update_config();
+is($updated, $nf_logfile, 'update2');
+is_deeply([$herd->cmdline($nf_logfile)], [@nf_cmdline], 'optimized-cmdline');
+
+# done_testing(); version on our CentOS boxes too old :(

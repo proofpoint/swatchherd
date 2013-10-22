@@ -1,0 +1,193 @@
+#!/usr/bin/env perl
+# /* Copyright 2013 Proofpoint, Inc. All rights reserved.
+# 
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+# 
+#     http://www.apache.org/licenses/LICENSE-2.0
+# 
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# */
+
+
+use strict;
+use warnings;
+use lib '/opt/pptools';
+use ppenv;
+use Optconfig;
+use Sys::Syslog qw(:standard :macros);
+use PPOPS::Herd::Swatch;
+
+use vars qw($VERSION $opt $me);
+
+$VERSION = '__VERSION__';
+$me = 'swatchherd';
+
+$opt = Optconfig->new('swatchherd', { 'config-root=s' =>
+                                         '/opt/pptools/etc/swatch.d',
+                                      'logfile-root=s' => '/',
+                                      'pidfile-dir=s' => '/var/run',
+                                      'syslog!' => 1,
+                                      'wait-timeout=i' => 20,
+                                      'timely-config!' => 1 });
+
+my $herd = PPOPS::Herd::Swatch->new($opt);
+if ($opt->{'syslog'}) {
+   openlog($me, 'ndelay,pid', LOG_DAEMON);
+}
+
+$herd->logger(
+   sub { my ($pri, $msg) = @_;
+         if ($pri eq 'warning') {
+            print STDERR "$me warning: $msg\n";
+         } elsif ($pri eq 'notice') {
+            print "$msg\n" if $opt->{'verbose'};
+         }
+         syslog($pri, $msg) if $opt->{'syslog'};
+      });
+
+my @argv = @ARGV;
+unshift(@argv, 'ensure') unless @argv;
+
+my $command = shift(@argv);
+my $status;
+if ($command eq 'ensure') {
+   $status = $herd->ensure(@argv);
+} elsif ($command eq 'scan') {
+   $status = $herd->scan(@argv);
+} elsif ($command eq 'start') {
+   $status = $herd->start(@argv);
+} elsif ($command eq 'restart') {
+   $status = $herd->restart(@argv);
+} elsif ($command eq 'reload') {
+   $status = $herd->reload(@argv);
+} elsif ($command eq 'update_config') {
+   $status = { map { ($_, 'updated') } $herd->update_config(@argv) };
+} elsif ($command eq 'stop') {
+   $status = $herd->stop(@argv);
+} elsif ($command eq 'status') {
+   $status = $herd->status(@argv);
+} else {
+   die "Invalid command: $command\n";
+}
+
+print $herd->show_status($status), "\n";
+
+=head1 NAME
+
+swatchherd - Manage a herd of swatches
+
+=head1 SYNOPSIS
+
+   swatchherd [options] [ensure|start|stop|status|scan|reload|update_config] [instance]
+      --config-root      Config file root (/opt/pptools/etc/swatch.d)
+      --logfile-root     Root directory for log files (/)
+      --pidfile-dir      Directory where pid files are kept (/var/run)
+      --nosyslog         Don't log actions to syslog
+      --notimely-config  Don't reload swatches when config is updated
+      Other options as documented in Optconfig
+
+=head1 DESCRIPTION
+
+The swatchherd command controls a group of swatch instances (see
+L<swatch>). In order to schedule a file for swatching, create a directory
+under the config file root (set by the C<--config-root> option) of the same
+name as the logfile you want swatched. In the directory, put any number of
+swatch config file fragments.
+
+The next time the swatchherd command is run (for the B<start>, B<reload>,
+B<scan> and B<update_config> subcommands), it will concatenate the swatch
+config file fragments into one config file and ensure swatch runs against the
+correct logfile.
+
+The swatch config file fragments can be named anything other than
+C<swatch.conf>. That file is created by swatchherd.
+
+By default, swatchherd will operate on the whole herd of swatches. If an
+instance is given it will operate on that one.
+
+When the operation is complete, swatchherd will print the status of the herd
+(or the instance(s) specified).
+
+=head2 Subcommands
+
+=over 4
+
+=item ensure
+
+Ensures all necessary swatch instances are running (start any that are not
+running). Reload swatch instances whose configurations have changed.
+
+=item start
+
+Start the swatch herd
+
+=item stop
+
+Stop the swatch herd
+
+=item status
+
+Print the status of the swatch herd
+
+=item scan
+
+Scan all the configured logfiles using C<swatch --examine>.
+
+=item reload
+
+Reload (start) the swatch instances. If you only want to restart those whose
+configuration has changed or which aren't already running, use B<ensure>.
+
+=item update_config
+
+Just update config files (C<swatch.conf> files)
+
+=back
+
+=head2 Options
+
+=over 4
+
+=item --config-root
+
+Set the config file root directory where swatchherd will pick up the swatch
+fragments. Note that swatchherd automatically ignores C<CVS> and C<.svn>
+directories. The default value for this option
+
+=item --logfile-root
+
+By default, swatchherd assumes that files configured to be swatched are in /.
+If another root directory should be used, specify this option (for example,
+if you want the swatch instance C</var/log/syslog> to actually tail the file
+C</log/web01/var/log/syslog> set C<--logfile-root> to C</log/web01>.
+
+=item --nosyslog
+
+By default, swatchherd logs its actions via syslog (using the LOG_DAEMON
+facility). Turn this off by passing this option.
+
+=item --notimely-config
+
+By default, when performing the B<ensure> subcommand, swatchherd will reload
+(restart) swatches whose configuration has changed. If this isn't desired set
+this option.
+
+=back
+
+=head1 EXAMPLES
+
+To swatch the logfile C</var/log/sylog>, create the directory
+C</opt/pptools/etc/swatch.d/var/log/syslog> and create a swatch configuration
+file called C</opt/pptools/etc/swatch.d/var/log/syslog/misc.conf>.
+
+=head1 AUTHOR
+
+Jeremy Brinkley, E<lt>jbrinkley@proofpoint.comE<gt>
+
+=cut
